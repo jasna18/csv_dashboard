@@ -9,8 +9,13 @@
  * export streams instead of buffering in memory.
  */
 const props = defineProps<{
-  /** The dashboard's active filters, forwarded verbatim. */
-  query: Record<string, string>
+  /**
+   * The dashboard's active filters, already serialised. Taking the string the
+   * dashboard itself fetched with is what guarantees the export matches the
+   * screen — rebuilding it here would be a second place for the array syntax to
+   * drift.
+   */
+  query: string
   disabled?: boolean
 }>()
 
@@ -19,8 +24,8 @@ const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 
 function url(format: 'csv' | 'xlsx') {
-  const params = new URLSearchParams({ ...props.query, format })
-  return `${config.public.apiBase}/reliability/export?${params.toString()}`
+  const separator = props.query ? '&' : ''
+  return `${config.public.apiBase}/reliability/export?${props.query}${separator}format=${format}`
 }
 
 // Close on an outside click or Escape, the two things a reader expects of a menu.

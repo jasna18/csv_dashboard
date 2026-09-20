@@ -30,43 +30,9 @@ class ReliabilityController extends Controller
      */
     public function dashboard(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date', 'after_or_equal:from'],
-            // A convenience over from/to: "2026-03" expands to that whole month.
-            'month' => ['nullable', 'string', 'regex:/^\d{4}-\d{2}$/'],
-            // Length caps only. The values are matched against the column, so an
-            // unknown one yields an empty dashboard rather than an error — which
-            // is the honest answer to "show me asset type ZZZ".
-            'asset_type' => ['nullable', 'string', 'max:255'],
-            'location' => ['nullable', 'string', 'max:100'],
-            'work_type' => ['nullable', 'string', 'max:255'],
-            'fault_cause' => ['nullable', 'string', 'max:255'],
-            'asset_number' => ['nullable', 'string', 'max:100'],
-            // Which downtime column to believe. See ReliabilityReport's class
-            // docblock — the two disagree, and the difference is the point.
-            'basis' => ['nullable', 'string', 'in:' . implode(',', ReliabilityReport::BASES)],
-        ]);
+        $validated = $request->validate($this->rules());
 
-        $filters = [
-            'from' => $validated['from'] ?? null,
-            'to' => $validated['to'] ?? null,
-            'basis' => $validated['basis'] ?? null,
-        ];
-
-        foreach (ReliabilityReport::DIMENSION_FILTERS as $key) {
-            $filters[$key] = $validated[$key] ?? null;
-        }
-
-        // An explicit month wins over a loose from/to, so the two controls
-        // cannot quietly contradict each other.
-        if (! empty($validated['month'])) {
-            $start = $validated['month'] . '-01';
-            $filters['from'] = $start;
-            $filters['to'] = date('Y-m-t', strtotime($start));
-        }
-
-        return response()->json($this->report->build($filters));
+        return response()->json($this->report->build($this->filters($validated)));
     }
 
     /**
@@ -87,18 +53,9 @@ class ReliabilityController extends Controller
      */
     public function export(Request $request): StreamedResponse
     {
-        $validated = $request->validate([
-            'format' => ['nullable', 'string', 'in:csv,xlsx'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date', 'after_or_equal:from'],
-            'month' => ['nullable', 'string', 'regex:/^\d{4}-\d{2}$/'],
-            'asset_type' => ['nullable', 'string', 'max:255'],
-            'location' => ['nullable', 'string', 'max:100'],
-            'work_type' => ['nullable', 'string', 'max:255'],
-            'fault_cause' => ['nullable', 'string', 'max:255'],
-            'asset_number' => ['nullable', 'string', 'max:100'],
-            'basis' => ['nullable', 'string', 'in:' . implode(',', ReliabilityReport::BASES)],
-        ]);
+        $validated = $request->validate(
+            $this->rules() + ['format' => ['nullable', 'string', 'in:csv,xlsx']],
+        );
 
         $format = $validated['format'] ?? 'xlsx';
         $payload = $this->report->build($this->filters($validated));
@@ -126,10 +83,54 @@ class ReliabilityController extends Controller
     }
 
     /**
+     * Validation for both the dashboard read and the export.
+     *
+     * Every dimension accepts a list as well as a scalar, so the multi-select UI
+     * can send `asset_type[]=STC&asset_type[]=ETV` while an existing caller
+     * passing `asset_type=STC` keeps working. `array` on the parent plus a rule
+     * on `.*` is what makes Laravel validate each element rather than the list.
+     *
+     * The values themselves are length-capped only. They are matched against the
+     * column, so an unknown one yields an empty dashboard rather than an error —
+     * the honest answer to "show me asset type ZZZ".
+     *
+     * @return array<string, mixed>
+     */
+    private function rules(): array
+    {
+        $dimensions = [
+            'asset_type' => 255,
+            'location' => 100,
+            'work_type' => 255,
+            'fault_cause' => 255,
+            'asset_number' => 100,
+        ];
+
+        $rules = [
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'month' => ['nullable'],
+            'month.*' => ['string', 'regex:/^\d{4}-\d{2}$/'],
+            'basis' => ['nullable', 'string', 'in:' . implode(',', ReliabilityReport::BASES)],
+        ];
+
+        foreach ($dimensions as $key => $max) {
+            $rules[$key] = ['nullable'];
+            $rules[$key . '.*'] = ['string', 'max:' . $max];
+        }
+
+        return $rules;
+    }
+
+    /**
      * Normalises the validated query into the filter array the report expects.
      *
+     * A scalar becomes a one-element list so everything downstream sees one
+     * shape, and `month` stays a set rather than being flattened into from/to —
+     * a range cannot express "January and March but not February".
+     *
      * @param array<string,mixed> $validated
-     * @return array<string,?string>
+     * @return array<string,mixed>
      */
     private function filters(array $validated): array
     {
@@ -137,18 +138,28 @@ class ReliabilityController extends Controller
             'from' => $validated['from'] ?? null,
             'to' => $validated['to'] ?? null,
             'basis' => $validated['basis'] ?? null,
+            'month' => $this->listOf($validated['month'] ?? null),
         ];
 
         foreach (ReliabilityReport::DIMENSION_FILTERS as $key) {
-            $filters[$key] = $validated[$key] ?? null;
-        }
-
-        if (! empty($validated['month'])) {
-            $start = $validated['month'] . '-01';
-            $filters['from'] = $start;
-            $filters['to'] = date('Y-m-t', strtotime($start));
+            $filters[$key] = $this->listOf($validated[$key] ?? null);
         }
 
         return $filters;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function listOf(mixed $value): array
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn ($item): string => (string) $item, (array) $value),
+            static fn (string $item): bool => $item !== '',
+        ));
     }
 }

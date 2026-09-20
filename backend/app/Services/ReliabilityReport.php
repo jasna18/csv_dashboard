@@ -133,9 +133,16 @@ class ReliabilityReport
             ? $filters['basis']
             : self::BASIS_MEASURED;
 
-        $applied = ['from' => $filters['from'] ?? null, 'to' => $filters['to'] ?? null, 'basis' => $basis];
+        $applied = [
+            'from' => $filters['from'] ?? null,
+            'to' => $filters['to'] ?? null,
+            // Carried as a set of its own rather than collapsed into from/to,
+            // which could only ever express a contiguous range.
+            'month' => $this->values($filters, 'month'),
+            'basis' => $basis,
+        ];
         foreach (self::DIMENSION_FILTERS as $key) {
-            $applied[$key] = $filters[$key] ?? null;
+            $applied[$key] = $this->values($filters, $key);
         }
 
         $period = $this->period($applied);
@@ -152,7 +159,9 @@ class ReliabilityReport
                 'options' => $this->filterOptions(),
                 'data_range' => $this->dataRange(),
             ],
-            'period' => $period,
+            // `ranges` is an implementation detail of the window maths — the
+            // widgets never read it, so it does not travel in the payload.
+            'period' => array_diff_key($period, ['ranges' => null]),
             'kpis' => $this->kpis($totals, $period, $applied, $basis, $intervals),
             'data_quality' => $this->dataQuality($applied),
             'trend' => $this->trend($applied, $basis, $intervals, $this->fleetSize($applied), $period),
@@ -193,13 +202,62 @@ class ReliabilityReport
         if (! empty($filters['to'])) {
             $query->whereDate('report_date', '<=', $filters['to']);
         }
+
+        // Months are a set, not a range. Picking January and March must not drag
+        // February along with them, which is what a min/max range would do.
+        $months = $this->values($filters, 'month');
+        if ($months !== []) {
+            $query->whereIn(DB::raw("date_format(report_date, '%Y-%m')"), $months);
+        }
+
         foreach (self::DIMENSION_FILTERS as $column) {
-            if (! empty($filters[$column])) {
-                $query->where($column, $filters[$column]);
+            $values = $this->values($filters, $column);
+            if ($values !== []) {
+                $query->whereIn($column, $values);
             }
         }
 
         return $query;
+    }
+
+    /**
+     * One filter's selected values, as a list.
+     *
+     * Accepts a scalar as well as an array, so a caller still passing
+     * `?asset_type=STC` keeps working alongside the multi-select UI's
+     * `?asset_type[]=STC&asset_type[]=ETV`. Empty strings are dropped rather
+     * than becoming a `whereIn` that matches nothing.
+     *
+     * @param array<string,mixed> $filters
+     * @return list<string>
+     */
+    private function values(array $filters, string $key): array
+    {
+        $value = $filters[$key] ?? null;
+
+        if ($value === null || $value === '' || $value === []) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn ($item): string => (string) $item, (array) $value),
+            static fn (string $item): bool => $item !== '',
+        ));
+    }
+
+    /** Seconds of [$start, $end) that fall inside any of $ranges. */
+    private function overlap(int $start, int $end, array $ranges): int
+    {
+        $total = 0;
+
+        foreach ($ranges as [$rangeStart, $rangeEnd]) {
+            $slice = min($end, $rangeEnd) - max($start, $rangeStart);
+            if ($slice > 0) {
+                $total += $slice;
+            }
+        }
+
+        return $total;
     }
 
     /**
@@ -219,8 +277,9 @@ class ReliabilityReport
         $query = DB::table('add_csv')->whereNotNull('asset_number');
 
         foreach (self::EQUIPMENT_FILTERS as $column) {
-            if (! empty($filters[$column])) {
-                $query->where($column, $filters[$column]);
+            $values = $this->values($filters, $column);
+            if ($values !== []) {
+                $query->whereIn($column, $values);
             }
         }
 
@@ -240,44 +299,84 @@ class ReliabilityReport
     /**
      * The window every rate is measured over, as whole days of 24/7 runtime.
      *
-     * @param array<string,?string> $filters
-     * @return array{start:?string, end:?string, days:int, hours:float, months:list<string>}
+     * Returned as a *list of ranges* rather than one span, because months are
+     * chosen as a set: January plus March is two ranges and 59 days of runtime,
+     * not the 90 that January-to-March would imply. Everything downstream —
+     * availability, serviceability, the monthly trend — measures against these
+     * ranges, so selecting scattered months stays arithmetically honest.
+     *
+     * The window is the observation period, not the span of the rows that
+     * survived the filter. Asking for work type PM once shrank the period to the
+     * 213 days between the first and last PM job, as though the fleet had
+     * stopped running either side of them.
+     *
+     * @param array<string,mixed> $filters
+     * @return array{start:?string, end:?string, days:int, hours:float, months:list<string>, ranges:list<array{0:int,1:int}>}
      */
     private function period(array $filters): array
     {
-        // The observation window, not the span of the rows that survived the
-        // filter. Asking for work type PM previously shrank the period to the
-        // 213 days between the first and last PM job, as though the fleet had
-        // stopped running either side of them.
-        $bounds = $this->dataRange();
+        $empty = ['start' => null, 'end' => null, 'days' => 0, 'hours' => 0.0, 'months' => [], 'ranges' => []];
 
-        $start = $filters['from'] ?: ($bounds['start'] ?? null);
-        $end = $filters['to'] ?: ($bounds['end'] ?? null);
+        $months = $this->values($filters, 'month');
+        sort($months);
 
-        if ($start === null || $end === null) {
-            return ['start' => null, 'end' => null, 'days' => 0, 'hours' => 0.0, 'months' => []];
+        if ($months !== []) {
+            $ranges = [];
+            foreach ($months as $month) {
+                $monthStart = strtotime($month . '-01 00:00:00');
+                if ($monthStart === false) {
+                    continue;
+                }
+                $ranges[] = [$monthStart, strtotime('+1 month', $monthStart)];
+            }
+
+            if ($ranges === []) {
+                return $empty;
+            }
+
+            $last = $ranges[count($ranges) - 1];
+            $displayStart = date('Y-m-d', $ranges[0][0]);
+            $displayEnd = date('Y-m-d', $last[1] - 86400);
+        } else {
+            $bounds = $this->dataRange();
+            $from = $filters['from'] ?: ($bounds['start'] ?? null);
+            $to = $filters['to'] ?: ($bounds['end'] ?? null);
+
+            if ($from === null || $to === null) {
+                return $empty;
+            }
+
+            $startDay = strtotime(date('Y-m-d', strtotime((string) $from)));
+            // Half-open at the end, so a window covering one calendar day is one
+            // day of runtime rather than zero.
+            $ranges = [[$startDay, strtotime(date('Y-m-d', strtotime((string) $to))) + 86400]];
+            $displayStart = (string) $from;
+            $displayEnd = (string) $to;
         }
 
-        $startDay = strtotime(date('Y-m-d', strtotime((string) $start)));
-        $endDay = strtotime(date('Y-m-d', strtotime((string) $end)));
-
-        // Inclusive of both end days: a slice covering one calendar day is one
-        // day of runtime, not zero.
-        $days = (int) max(1, round(($endDay - $startDay) / 86400) + 1);
-
-        $months = [];
-        $cursor = strtotime(date('Y-m-01', $startDay));
-        while ($cursor <= $endDay) {
-            $months[] = date('Y-m', $cursor);
-            $cursor = strtotime('+1 month', $cursor);
+        $seconds = 0;
+        foreach ($ranges as [$rangeStart, $rangeEnd]) {
+            $seconds += $rangeEnd - $rangeStart;
         }
+        $days = (int) max(1, round($seconds / 86400));
+
+        // Every calendar month the ranges touch — what the trend iterates.
+        $covered = [];
+        foreach ($ranges as [$rangeStart, $rangeEnd]) {
+            for ($cursor = strtotime(date('Y-m-01', $rangeStart)); $cursor < $rangeEnd; $cursor = strtotime('+1 month', $cursor)) {
+                $covered[date('Y-m', $cursor)] = true;
+            }
+        }
+        $coveredMonths = array_keys($covered);
+        sort($coveredMonths);
 
         return [
-            'start' => (string) $start,
-            'end' => (string) $end,
+            'start' => $displayStart,
+            'end' => $displayEnd,
             'days' => $days,
             'hours' => $days * self::HOURS_PER_DAY,
-            'months' => $months,
+            'months' => $coveredMonths,
+            'ranges' => $ranges,
         ];
     }
 
@@ -345,8 +444,13 @@ class ReliabilityReport
         }
         $flush();
 
+        $ranges = $period['ranges'] ?? [];
+
         foreach ($spans as [$spanAsset, $start, $end]) {
-            $downSeconds += $end - $start;
+            // Only the part of the repair that falls inside the window counts.
+            // Without this, selecting March alone charged the whole of a 51-day
+            // repair against 31 days of runtime and pushed availability negative.
+            $downSeconds += $this->overlap($start, $end, $ranges);
 
             // Attribute the span to the months it actually covers rather than
             // to the month it started in — a 51-day repair belongs to all of
@@ -354,15 +458,19 @@ class ReliabilityReport
             foreach ($byMonth as $month => $seconds) {
                 $monthStart = strtotime($month . '-01 00:00:00');
                 $monthEnd = strtotime('+1 month', $monthStart);
-                $overlap = min($end, $monthEnd) - max($start, $monthStart);
-                if ($overlap > 0) {
-                    $byMonth[$month] += $overlap;
+                $sliceStart = max($start, $monthStart);
+                $sliceEnd = min($end, $monthEnd);
+                if ($sliceEnd > $sliceStart) {
+                    $byMonth[$month] += $this->overlap($sliceStart, $sliceEnd, $ranges);
                 }
             }
 
-            // Day granularity for serviceability: any overlap marks the day.
+            // Day granularity for serviceability: any overlap marks the day, but
+            // only for days the window actually covers.
             for ($day = strtotime(date('Y-m-d', $start)); $day <= $end; $day += 86400) {
-                $assetDays[$spanAsset . '|' . date('Y-m-d', $day)] = true;
+                if ($this->overlap($day, $day + 86400, $ranges) > 0) {
+                    $assetDays[$spanAsset . '|' . date('Y-m-d', $day)] = true;
+                }
             }
         }
 
@@ -581,16 +689,7 @@ class ReliabilityReport
         $monthStart = strtotime($month . '-01 00:00:00');
         $monthEnd = strtotime('+1 month', $monthStart);
 
-        $windowStart = $period['start'] ? strtotime(date('Y-m-d', strtotime($period['start']))) : $monthStart;
-        // Inclusive of the final day, so a window ending mid-month still counts
-        // that day as runtime.
-        $windowEnd = $period['end']
-            ? strtotime(date('Y-m-d', strtotime($period['end']))) + 86400
-            : $monthEnd;
-
-        $overlap = min($monthEnd, $windowEnd) - max($monthStart, $windowStart);
-
-        return (int) max(0, round($overlap / 86400));
+        return (int) max(0, round($this->overlap($monthStart, $monthEnd, $period['ranges'] ?? []) / 86400));
     }
 
     /**

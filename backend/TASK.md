@@ -4,7 +4,7 @@
 **Input:** one uploaded CSV — **12 known work-order columns**, ~5,000 rows (see §2a)
 **Output:** JSON API that the Nuxt frontend uses to render KPI cards, charts and a data table
 
-**Progress:** 80 / 187 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
+**Progress:** 87 / 194 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
 
 ---
 
@@ -261,6 +261,35 @@ against the running app rather than inferred. Ranked by severity.
   renders through `{{ }}`; no `v-html` anywhere in `frontend/app`.
 - CORS. Restricted to `http://localhost:3000` with `supports_credentials` false.
 
+**Multi-select filters ✅ BUILT**
+
+Every dimension — month, fleet, equipment, location, work type, fault cause — is a checkbox
+dropdown taking a set rather than one value. Sent as `asset_type[]=STC&asset_type[]=ETV`;
+a scalar still works, so `?asset_type=STC` keeps functioning.
+
+- [x] An empty set means **no constraint**, not "nothing". The "All" row is a shortcut that
+      clears the selection rather than a value of its own, so the API has one meaning for
+      unfiltered instead of two.
+- [x] **Months are a set, not a range.** Picking January and March must not drag February in
+      with them, which is exactly what a min/max range would do. The observation window is now a
+      *list of ranges*, and days are summed across them: Jan + Mar is 62 days and 133,920
+      runtime hours (90 × 62 × 24), not the 90 days Jan-to-March would imply. Verified against
+      the API.
+- [x] **Downtime is clipped to the window.** Previously a repair that ran past the selected
+      months was charged in full against the months' runtime — a 51-day repair against 31 days
+      of March. `overlap()` now counts only the part inside the window, for the total, the
+      per-month trend and the serviceability day-marking alike.
+- [x] The equipment/work-order split still holds: picking two fleets changes the roster
+      (STC + ETV = 7 units, 40,656 runtime hours), picking two fault causes does not
+      (roster stays 90). Verified in the browser.
+- [x] The header names the selected months rather than showing a range across them —
+      "Feb 2026, Apr 2026 · 58 days", because "1 Feb – 30 Apr · 58 days" reads as a contradiction.
+- [x] Export mirrors the same serialised query, so a filtered export matches the screen.
+- [x] **A dropped-click bug, found and fixed.** Deriving each toggle from `props.modelValue`
+      lost selections: the prop only updates after the parent re-renders, so two checkboxes
+      ticked in the same tick both read the old value and the second emit discarded the first —
+      ticking January then March sent only March. The component now holds the selection locally
+      and mirrors it out.
 **Export — `GET /api/reliability/export` ✅ BUILT**
 
 - [x] The current slice as a workbook: `format=xlsx` gives one sheet per widget,

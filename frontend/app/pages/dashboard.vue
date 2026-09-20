@@ -17,7 +17,7 @@ import type { ApexOptions } from 'apexcharts'
  */
 useHead({ title: 'Fleet Reliability' })
 
-const { filters, query, data, pending, error, reset, activeCount } = useReliability()
+const { filters, queryString, data, pending, error, reset, activeCount } = useReliability()
 
 const kpis = computed(() => data.value?.kpis)
 const quality = computed(() => data.value?.data_quality)
@@ -27,10 +27,29 @@ const options = computed(() => data.value?.filters.options)
 const availabilityState = computed(() => availabilityStatus(kpis.value?.availability_pct ?? null))
 const serviceabilityState = computed(() => availabilityStatus(kpis.value?.serviceability_pct ?? null))
 
+/**
+ * What the period reads as in the header.
+ *
+ * Months are chosen as a set, so a start–end range can misdescribe it: picking
+ * February and April spans "1 Feb – 30 Apr" but is 58 days of runtime, not the
+ * 89 that range implies. When specific months are selected the label names them
+ * instead, and falls back to counting once there are too many to list.
+ */
 const periodLabel = computed(() => {
   const period = data.value?.period
   if (!period?.start || !period?.end) return 'No data'
-  return `${fmt.date(period.start)} – ${fmt.date(period.end)} · ${fmt.int(period.days)} days`
+
+  const days = `${fmt.int(period.days)} days`
+  const picked = filters.month
+
+  if (picked.length > 0 && picked.length <= 3) {
+    return `${[...picked].sort().map(fmt.month).join(', ')} · ${days}`
+  }
+  if (picked.length > 3) {
+    return `${picked.length} months · ${days}`
+  }
+
+  return `${fmt.date(period.start)} – ${fmt.date(period.end)} · ${days}`
 })
 
 const basisNote = computed(() =>
@@ -332,9 +351,12 @@ const bucketRows = computed(() =>
   })),
 )
 
-/** Every dimension select shares one shape. */
+/**
+ * Every filter dropdown shares one shape. `format` only changes what a row reads
+ * as — the value sent to the API stays the raw `2026-03`.
+ */
 const selects = computed(() => [
-  { key: 'month' as const, label: 'Month', values: options.value?.month ?? [], all: 'All months' },
+  { key: 'month' as const, label: 'Month', values: options.value?.month ?? [], all: 'All months', format: fmt.month },
   { key: 'asset_type' as const, label: 'Fleet', values: options.value?.asset_type ?? [], all: 'All fleets' },
   { key: 'asset_number' as const, label: 'Equipment', values: options.value?.asset_number ?? [], all: 'All equipment' },
   { key: 'location' as const, label: 'Location', values: options.value?.location ?? [], all: 'All locations' },
@@ -362,7 +384,7 @@ const selects = computed(() => [
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <DashboardExportButton :query="query" :disabled="!data" />
+          <DashboardExportButton :query="queryString" :disabled="!data" />
 
           <!-- Which downtime column to believe. Named on the surface because the
                two disagree by thousands of hours. -->
@@ -385,21 +407,15 @@ const selects = computed(() => [
 
     <!-- Filter row: one control set, scoping every card below it. -->
     <div class="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <div v-for="select in selects" :key="select.key" class="flex min-w-0 flex-col gap-1">
-        <label :for="`filter-${select.key}`" class="text-xs font-medium text-slate-500">
-          {{ select.label }}
-        </label>
-        <select
-          :id="`filter-${select.key}`"
-          v-model="filters[select.key]"
-          class="max-w-[11rem] rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-700 focus:border-brand-500 focus:outline-none"
-        >
-          <option :value="null">{{ select.all }}</option>
-          <option v-for="value in select.values" :key="value" :value="value">
-            {{ select.key === 'month' ? fmt.month(value) : value }}
-          </option>
-        </select>
-      </div>
+      <DashboardMultiSelect
+        v-for="select in selects"
+        :key="select.key"
+        v-model="filters[select.key]"
+        :label="select.label"
+        :options="select.values"
+        :all-label="select.all"
+        :format="select.format"
+      />
 
       <button
         v-if="activeCount"
