@@ -4,7 +4,7 @@
 **Input:** one uploaded CSV — **12 known work-order columns**, ~5,000 rows (see §2a)
 **Output:** JSON API that the Nuxt frontend uses to render KPI cards, charts and a data table
 
-**Progress:** 68 / 173 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
+**Progress:** 71 / 177 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
 
 ---
 
@@ -260,6 +260,34 @@ against the running app rather than inferred. Ranked by severity.
 - Reflected XSS from the 422 message or the echoed filename. Responses are JSON and the Nuxt app
   renders through `{{ }}`; no `v-html` anywhere in `frontend/app`.
 - CORS. Restricted to `http://localhost:3000` with `supports_credentials` false.
+
+**Follow-up — 2026-09-20, protecting `.env`**
+
+- [x] **`.env` is clean on the git side.** Never committed, absent from history, ignored by
+      `backend/.gitignore:3`, and invisible to `git status -uall`. Only `.env.example` is
+      tracked. The same now holds for `frontend/.env`.
+- [x] **`APP_KEY` rotated.** The old key was served over HTTP before the `.htaccess` fix, so it
+      was treated as disclosed. `php artisan key:generate` replaced it and the `cache`,
+      `cache_locks` and `sessions` rows encrypted under the old key were cleared. Nothing else
+      depended on it — `users` is empty and `add_csv` holds no encrypted columns.
+- [x] **The `.git` directory was web-readable, and that was self-inflicted.** Initialising the
+      repo at `csv-dashboard/` put `.git/` one level *above* `backend/.htaccess`, so
+      `/csv-dashboard/.git/config`, `HEAD`, `index`, `refs/heads/main` and `logs/HEAD` all
+      returned 200 — enough for `git-dumper` to reconstruct the entire repository and its
+      history. `frontend/` source was served too. Fixed with a deny-all `csv-dashboard/.htaccess`
+      that also blocks dot-paths explicitly (`FilesMatch "^\."` plus a rewrite rule, since
+      `FilesMatch` only sees the filename and would miss `.git/refs/heads/main`).
+      `backend/public/` still re-grants, and the API through Apache still returns 200.
+- [ ] **Rotate the database credentials too.** `DB_USERNAME=root` with an empty password was in
+      the same disclosed file. It is the XAMPP default and only reachable from localhost, but
+      setting a MySQL root password would affect every other project under `htdocs`, so it is
+      left as your call rather than changed here.
+
+**Environment note:** port 8000 is held by the uvicorn service from
+`vue-portfolio-new/portfolio-rag`, not Laravel — the `artisan serve` process had exited and
+uvicorn took the port, which is why the dashboard briefly 500'd. The API now runs on 8001
+(`php artisan serve --port=8001`) and `frontend/.env` points at it. Nothing to do with the key
+rotation; the app was healthy through Apache throughout.
 
 **Open — needs a decision**
 

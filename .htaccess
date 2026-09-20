@@ -1,0 +1,49 @@
+# Nothing in this project is meant to be fetched over HTTP except the API's
+# front controller.
+#
+# The project sits under XAMPP's DocumentRoot (C:/xampp/htdocs), so without this
+# every file here is served: the .git directory (config, HEAD, index, refs and
+# logs are enough to reconstruct the entire repository and its history), the
+# Nuxt source and its node_modules, backend/.env with the APP_KEY and database
+# credentials, and every uploaded spreadsheet under backend/storage.
+#
+# Only backend/public/ is a document root; it re-grants access in its own
+# .htaccess, and this denial is inherited everywhere else. backend/.htaccess
+# repeats the denial one level down so the application tree stays protected even
+# if this file is lost or the project is moved.
+#
+# The real fix is to point a vhost at backend/public — or move the project out
+# of htdocs — and serve the API through that. This is the guard for the current
+# layout, and stays correct either way.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+
+# Belt and braces for dot-files and dot-directories (.git, .env, .gitignore),
+# which is the case that matters most if the rules above are ever relaxed.
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Same, for paths *inside* a dot-directory — FilesMatch only sees the filename,
+# so .git/refs/heads/main would slip past it on its own. .well-known stays
+# reachable because ACME and friends legitimately use it.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule (^|/)\.(?!well-known(/|$)) - [F,L]
+</IfModule>
+
+# Never index a directory here, even if a future config re-grants access.
+Options -Indexes
