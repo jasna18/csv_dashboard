@@ -77,7 +77,7 @@ class ReliabilityExporter
             'title' => 'Filters',
             'columns' => ['Filter', 'Value'],
             'rows' => array_map(
-                fn ($key) => [$key, $applied[$key] ?? '(all)'],
+                fn ($key) => [$key, $this->describeFilter($applied[$key] ?? null)],
                 array_keys($applied),
             ),
         ];
@@ -168,6 +168,22 @@ class ReliabilityExporter
     }
 
     /**
+     * Renders one applied filter for the Filters sheet.
+     *
+     * Filters are sets now, so a value arriving here is usually a list. An empty
+     * one is the absence of a constraint, which reads as "(all)" rather than as
+     * a blank a reader would have to interpret.
+     */
+    private function describeFilter(mixed $value): string
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return '(all)';
+        }
+
+        return is_array($value) ? implode(', ', $value) : (string) $value;
+    }
+
+    /**
      * Neutralises a value that a spreadsheet would otherwise execute.
      *
      * Numbers and nulls pass through untouched — they cannot carry a formula and
@@ -178,6 +194,13 @@ class ReliabilityExporter
     {
         if ($value === null || is_bool($value) || is_int($value) || is_float($value)) {
             return $value;
+        }
+
+        // A list reaching a single cell would otherwise throw halfway through a
+        // streamed file, leaving the caller a truncated download and a 500 with
+        // the headers already sent. Flattening is the recoverable answer.
+        if (is_array($value)) {
+            $value = implode(', ', array_map(static fn ($item): string => (string) $item, $value));
         }
 
         $string = (string) $value;
