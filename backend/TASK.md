@@ -4,7 +4,7 @@
 **Input:** one uploaded CSV — **12 known work-order columns**, ~5,000 rows (see §2a)
 **Output:** JSON API that the Nuxt frontend uses to render KPI cards, charts and a data table
 
-**Progress:** 71 / 177 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
+**Progress:** 74 / 181 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
 
 ---
 
@@ -261,6 +261,30 @@ against the running app rather than inferred. Ranked by severity.
   renders through `{{ }}`; no `v-html` anywhere in `frontend/app`.
 - CORS. Restricted to `http://localhost:3000` with `supports_credentials` false.
 
+**Clear-database action — `DELETE /api/csv/rows` ✅ BUILT**
+
+- [x] Empties `add_csv` with TRUNCATE, which is the opposite of the choice inside an import and
+      for the opposite reason: there the clear has to roll back with the rows that follow it, so
+      it is a DELETE inside the transaction; here nothing follows it, so TRUNCATE is free to
+      reset AUTO_INCREMENT and skip the undo log. Verified: 5,563 rows removed,
+      `AUTO_INCREMENT` back to 1.
+- [x] Guarded against being triggered by accident, since it is irreversible and the API has no
+      auth:
+      - `DELETE`, not `GET` or a form `POST`. A form POST is CORS-safelisted, so any page could
+        fire one and the browser would send it; DELETE with a JSON body forces a preflight that
+        the CORS config refuses for every origin but the dashboard's.
+      - an exact `confirm: "CLEAR"` value is required. Verified: missing → 422, wrong value →
+        422, `GET`/`POST` → 405, and the table was untouched by all four.
+      - `throttle:5,1`, the tightest of the three routes — nothing legitimate calls it in a loop.
+      - logged at warning level with the row count and IP, since a truncate leaves no trace in
+        the data itself.
+- [x] UI sits below the import form on `/`, styled as a hazard rather than an action, and names
+      the number of rows at stake. The confirm is a second, differently-worded button rather
+      than `confirm()` — it can state the row count, and it is not the dialog muscle memory
+      dismisses. Verified in a browser: Cancel leaves all 5,563 rows, Confirm empties the table
+      and the panel switches to "The table is already empty" with the button disabled.
+- [ ] None of this is a substitute for authentication (§3a). It raises the bar for an accident,
+      not for someone who means it.
 **Follow-up — 2026-09-20, protecting `.env`**
 
 - [x] **`.env` is clean on the git side.** Never committed, absent from history, ignored by

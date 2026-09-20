@@ -37,6 +37,60 @@ interface ImportResult {
 const result = ref<ImportResult | null>(null)
 const expectedHeaders = ref<string[]>([])
 
+/* ------------------------------------------------------- clearing the table */
+
+/*
+ * Rows currently stored, so the confirm step can say what is about to go.
+ *
+ * Read during the server render rather than in onMounted, so the copy names the
+ * real number at first paint instead of flickering from "every imported row" to
+ * "all 5,563 rows". Copied into a ref because the clear and import handlers
+ * write to it; null when the API cannot be reached, and the panel falls back to
+ * wording that does not need a number.
+ */
+const { data: summary } = await useFetch<{ total_rows: number }>(
+  () => `${config.public.apiBase}/csv/summary`,
+  { key: 'csv-summary', default: () => null },
+)
+
+const tableTotal = ref<number | null>(summary.value?.total_rows ?? null)
+const clearing = ref(false)
+/** Second stage of the confirm. A destructive action should take two decisions. */
+const confirmingClear = ref(false)
+const clearMessage = ref('')
+const clearError = ref('')
+
+
+async function clearDatabase() {
+  clearing.value = true
+  clearError.value = ''
+  clearMessage.value = ''
+
+  try {
+    // DELETE with a JSON body, not a form post: that combination is not
+    // CORS-safelisted, so the browser preflights it and only this origin is
+    // allowed through. `confirm` is matched exactly server-side.
+    const data = await $fetch<{ message: string, table_total: number }>(
+      `${config.public.apiBase}/csv/rows`,
+      { method: 'DELETE', body: { confirm: 'CLEAR' } },
+    )
+    clearMessage.value = data.message
+    tableTotal.value = data.table_total
+    // The import result on screen now describes rows that no longer exist.
+    result.value = null
+  }
+  catch (e: unknown) {
+    const status = (e as { statusCode?: number })?.statusCode
+    clearError.value = status === 429
+      ? 'Too many attempts. Wait a minute and try again.'
+      : 'Could not clear the table. Is the API running?'
+  }
+  finally {
+    clearing.value = false
+    confirmingClear.value = false
+  }
+}
+
 const canSubmit = computed(() => !!file.value && !uploading.value && !error.value)
 
 function formatBytes(bytes: number): string {
@@ -83,6 +137,8 @@ function onDrop(e: DragEvent) {
 }
 
 function clear() {
+  clearMessage.value = ''
+  clearError.value = ''
   file.value = null
   error.value = ''
   progress.value = 0
@@ -116,6 +172,8 @@ function submit() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
         result.value = JSON.parse(xhr.responseText) as ImportResult
+        // Keep the clear-database panel honest about what it would remove.
+        tableTotal.value = result.value.table_total
       } catch {
         error.value = 'Upload succeeded but the server sent a response we could not read.'
       }
@@ -296,5 +354,75 @@ function submit() {
         {{ uploading ? 'Uploading…' : 'Submit' }}
       </button>
     </form>
+
+    <!-- Clearing the table.
+         Set apart from the form and styled as a hazard rather than an action,
+         because an import appends and this does not: it empties the table for
+         good. The confirm is a second, differently-worded decision rather than a
+         browser confirm() — it can name the number of rows at stake, and it
+         cannot be dismissed by muscle memory on a dialog that always says the
+         same thing. -->
+    <section
+      class="mt-10 rounded-xl border border-red-200 bg-red-50/60 px-4 py-4"
+      aria-labelledby="clear-heading"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h2 id="clear-heading" class="text-sm font-semibold text-red-900">
+            Clear the database
+          </h2>
+          <p class="mt-0.5 text-xs text-red-800">
+            <template v-if="tableTotal === null">
+              Removes every imported row. This cannot be undone.
+            </template>
+            <template v-else-if="tableTotal === 0">
+              The table is already empty.
+            </template>
+            <template v-else>
+              Removes all {{ tableTotal.toLocaleString() }} rows. This cannot be undone.
+            </template>
+          </p>
+        </div>
+
+        <div class="flex shrink-0 items-center gap-2">
+          <template v-if="!confirmingClear">
+            <button
+              type="button"
+              class="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm transition hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="uploading || clearing || tableTotal === 0"
+              @click="confirmingClear = true"
+            >
+              Clear database
+            </button>
+          </template>
+
+          <template v-else>
+            <button
+              type="button"
+              class="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-60"
+              :disabled="clearing"
+              @click="clearDatabase"
+            >
+              {{ clearing ? 'Clearing…' : 'Yes, delete everything' }}
+            </button>
+            <button
+              type="button"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              :disabled="clearing"
+              @click="confirmingClear = false"
+            >
+              Cancel
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <p v-if="clearMessage" class="mt-3 text-sm font-medium text-red-900" role="status">
+        {{ clearMessage }}
+      </p>
+      <p v-if="clearError" class="mt-3 text-sm text-red-800" role="alert">
+        {{ clearError }}
+      </p>
+    </section>
   </div>
 </template>

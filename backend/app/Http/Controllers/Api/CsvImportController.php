@@ -7,6 +7,8 @@ use App\Http\Requests\ImportCsvRequest;
 use App\Models\AddCsv;
 use App\Services\CsvImporter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -100,6 +102,56 @@ class CsvImportController extends Controller
             'summary' => $summary,
             'table_total' => AddCsv::count(),
         ], 201);
+    }
+
+    /**
+     * DELETE /api/csv/rows — empties `add_csv`.
+     *
+     * TRUNCATE here, which is the opposite of the choice made inside an import,
+     * and for the opposite reason. There, the clear had to roll back with the
+     * rows that followed it, so it uses DELETE inside the transaction. Here
+     * there is nothing after it that can fail, so there is no rollback to
+     * preserve — and TRUNCATE resets AUTO_INCREMENT and returns the storage
+     * rather than writing a row-by-row undo log.
+     *
+     * Destructive and unauthenticated, so it is deliberately awkward to trigger
+     * by accident:
+     *
+     *  - DELETE rather than GET or a form POST. A form POST is CORS-safelisted,
+     *    so any page could fire one at this API and the browser would send it;
+     *    DELETE forces a preflight, which the CORS config refuses for every
+     *    origin but the dashboard's.
+     *  - an exact `confirm` value must be present, so a stray or replayed
+     *    request does nothing.
+     *
+     * Neither is a substitute for authentication (TASK.md §3a) — they raise the
+     * bar for an accident, not for someone who means it.
+     */
+    public function destroyAll(Request $request): JsonResponse
+    {
+        $request->validate([
+            'confirm' => ['required', 'string', 'in:CLEAR'],
+        ]);
+
+        // Counted before the truncate, or there is nothing left to report.
+        $removed = AddCsv::count();
+
+        DB::table('add_csv')->truncate();
+
+        // Logged at warning: it is irreversible and leaves no trace in the data
+        // itself, so the log is the only record that it happened.
+        Log::warning('add_csv cleared', [
+            'rows_removed' => $removed,
+            'ip' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'message' => $removed === 1
+                ? '1 row removed. The table is now empty.'
+                : number_format($removed) . ' rows removed. The table is now empty.',
+            'rows_removed' => $removed,
+            'table_total' => AddCsv::count(),
+        ]);
     }
 
     /** GET /api/csv/summary — quick check of what is currently in the table. */

@@ -17,6 +17,12 @@ Route::middleware('throttle:10,1')->post('/csv/import', [CsvImportController::cl
 Route::middleware('throttle:60,1')->get('/csv/summary', [CsvImportController::class, 'summary']);
 
 /*
+ * Empties the table. Throttled hardest of the three: it is the only irreversible
+ * operation here, and nothing legitimate needs to call it in a loop.
+ */
+Route::middleware('throttle:5,1')->delete('/csv/rows', [CsvImportController::class, 'destroyAll']);
+
+/*
  * Read-only aggregates behind the dashboard. Same reasoning as above: no auth
  * yet, so the throttle is what stops a stranger replaying an expensive
  * group-by. It is a touch more generous than the import limit because the
