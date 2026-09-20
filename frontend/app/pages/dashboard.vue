@@ -17,7 +17,7 @@ import type { ApexOptions } from 'apexcharts'
  */
 useHead({ title: 'Fleet Reliability' })
 
-const { filters, data, pending, error, reset, activeCount } = useReliability()
+const { filters, query, data, pending, error, reset, activeCount } = useReliability()
 
 const kpis = computed(() => data.value?.kpis)
 const quality = computed(() => data.value?.data_quality)
@@ -361,9 +361,12 @@ const selects = computed(() => [
           </p>
         </div>
 
-        <!-- Which downtime column to believe. Named on the surface because the
-             two disagree by thousands of hours. -->
-        <div class="flex rounded-lg bg-white/15 p-0.5" role="group" aria-label="Downtime basis">
+        <div class="flex flex-wrap items-center gap-2">
+          <DashboardExportButton :query="query" :disabled="!data" />
+
+          <!-- Which downtime column to believe. Named on the surface because the
+               two disagree by thousands of hours. -->
+          <div class="flex rounded-lg bg-white/15 p-0.5" role="group" aria-label="Downtime basis">
           <button
             v-for="option in (['measured', 'reported'] as const)"
             :key="option"
@@ -373,8 +376,9 @@ const selects = computed(() => [
             :aria-pressed="filters.basis === option"
             @click="filters.basis = option"
           >
-            {{ option }}
-          </button>
+              {{ option }}
+            </button>
+          </div>
         </div>
       </div>
     </div>

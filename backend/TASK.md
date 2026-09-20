@@ -4,7 +4,7 @@
 **Input:** one uploaded CSV — **12 known work-order columns**, ~5,000 rows (see §2a)
 **Output:** JSON API that the Nuxt frontend uses to render KPI cards, charts and a data table
 
-**Progress:** 74 / 181 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
+**Progress:** 80 / 187 complete. `- [ ]` = not started, `- [x]` = done. Tick each box as the task lands, and bump the count on this line.
 
 ---
 
@@ -261,6 +261,33 @@ against the running app rather than inferred. Ranked by severity.
   renders through `{{ }}`; no `v-html` anywhere in `frontend/app`.
 - CORS. Restricted to `http://localhost:3000` with `supports_credentials` false.
 
+**Export — `GET /api/reliability/export` ✅ BUILT**
+
+- [x] The current slice as a workbook: `format=xlsx` gives one sheet per widget,
+      `format=csv` the same sections as labelled blocks in one file. It takes the same filters
+      as the dashboard read, so an export always matches what was on screen — verified with
+      `fault_cause=Technical`, where the export's Availability row reads 99.38%, the same figure
+      the dashboard reports.
+- [x] Streamed through a `StreamedResponse`. The payload is small today; streaming costs nothing
+      extra and stops a larger fleet turning this into a memory limit.
+- [x] **This is the formula-injection sink §3a predicted.** Values that came out of an uploaded
+      spreadsheet are going back into one, and a cell beginning `=`, `+`, `-`, `@`, tab or CR is
+      executed on open — `=cmd|'/c calc'!A1` is working command execution through Excel's DDE.
+      Not theoretical here: the source file already carries `=L32-K32` in 248 cells.
+      `ReliabilityExporter::escape()` prefixes such cells with an apostrophe, on the way out
+      only, so the stored value stays faithful. Leading whitespace is skipped before the check,
+      because Excel trims before evaluating.
+      Verified by inserting `=cmd|'/c calc'!A1`, `@SUM(1+1)*cmd` and
+      `  =HYPERLINK("http://evil","click")` as fault types and exporting: all three came back
+      apostrophe-prefixed in the CSV, and OpenSpout reads them out of the XLSX as `StringCell`
+      rather than `FormulaCell` — inert. Test rows removed afterwards.
+- [x] Numbers and nulls pass through unescaped, or every figure would arrive as text and the
+      workbook would be useless for charting.
+- [x] Throttled at 30/min, below the dashboard read: building a file is the more expensive of
+      the two and nothing clicks Export in a loop.
+- [x] UI: an "Export CSV/Excel" button in the dashboard header with a two-item menu. Plain
+      anchors rather than fetch-and-blob, so the browser handles the save, the file never passes
+      through JS, and a large export streams. Verified the href carries the active filters.
 **Clear-database action — `DELETE /api/csv/rows` ✅ BUILT**
 
 - [x] Empties `add_csv` with TRUNCATE, which is the opposite of the choice inside an import and
@@ -275,7 +302,11 @@ against the running app rather than inferred. Ranked by severity.
         the CORS config refuses for every origin but the dashboard's.
       - an exact `confirm: "CLEAR"` value is required. Verified: missing → 422, wrong value →
         422, `GET`/`POST` → 405, and the table was untouched by all four.
-      - `throttle:5,1`, the tightest of the three routes — nothing legitimate calls it in a loop.
+      - `throttle:20,1`. Still the tightest limit here, but not as tight as it looks: a
+        browser DELETE is preceded by a CORS preflight, and the OPTIONS request passes through
+        the same throttle, so every click from the UI costs two. At 5/min that left a user two
+        attempts before a genuine confirm started failing with 429 — which it duly did in
+        testing, and the dialog surfaced it correctly rather than failing silently.
       - logged at warning level with the row count and IP, since a truncate leaves no trace in
         the data itself.
 - [x] UI sits below the import form on `/`, styled as a hazard rather than an action, and names

@@ -41,6 +41,11 @@ watch(() => route.fullPath, () => (mobileOpen.value = false))
                 {{ item.label }}
               </NuxtLink>
             </li>
+            <!-- Last, and set apart by a divider: it is an action, not a
+                 destination, and a destructive one. -->
+            <li class="ml-2 border-l border-slate-200 pl-2">
+              <ClearDataButton />
+            </li>
           </ul>
 
           <!-- Mobile toggle -->
@@ -71,6 +76,9 @@ watch(() => route.fullPath, () => (mobileOpen.value = false))
             >
               {{ item.label }}
             </NuxtLink>
+          </li>
+          <li class="mt-2 border-t border-slate-200 pt-2">
+            <ClearDataButton />
           </li>
         </ul>
       </nav>

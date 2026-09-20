@@ -17,10 +17,14 @@ Route::middleware('throttle:10,1')->post('/csv/import', [CsvImportController::cl
 Route::middleware('throttle:60,1')->get('/csv/summary', [CsvImportController::class, 'summary']);
 
 /*
- * Empties the table. Throttled hardest of the three: it is the only irreversible
- * operation here, and nothing legitimate needs to call it in a loop.
+ * Empties the table. Still the tightest limit here — it is the only irreversible
+ * operation and nothing legitimate calls it in a loop — but not as tight as it
+ * looks: a browser DELETE is preceded by a CORS preflight, and the OPTIONS
+ * request passes through this same throttle, so every click from the UI costs
+ * two. At 5/min that left a user two attempts before a genuine confirm started
+ * failing with 429.
  */
-Route::middleware('throttle:5,1')->delete('/csv/rows', [CsvImportController::class, 'destroyAll']);
+Route::middleware('throttle:20,1')->delete('/csv/rows', [CsvImportController::class, 'destroyAll']);
 
 /*
  * Read-only aggregates behind the dashboard. Same reasoning as above: no auth
@@ -29,3 +33,9 @@ Route::middleware('throttle:5,1')->delete('/csv/rows', [CsvImportController::cla
  * dashboard refetches on every filter change.
  */
 Route::middleware('throttle:120,1')->get('/reliability/dashboard', [ReliabilityController::class, 'dashboard']);
+
+/*
+ * The same slice as a workbook. Throttled below the dashboard read: building a
+ * file is the more expensive of the two and nothing clicks Export in a loop.
+ */
+Route::middleware('throttle:30,1')->get('/reliability/export', [ReliabilityController::class, 'export']);

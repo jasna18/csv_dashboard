@@ -40,55 +40,28 @@ const expectedHeaders = ref<string[]>([])
 /* ------------------------------------------------------- clearing the table */
 
 /*
- * Rows currently stored, so the confirm step can say what is about to go.
- *
- * Read during the server render rather than in onMounted, so the copy names the
- * real number at first paint instead of flickering from "every imported row" to
- * "all 5,563 rows". Copied into a ref because the clear and import handlers
- * write to it; null when the API cannot be reached, and the panel falls back to
- * wording that does not need a number.
+ * Same composable the navbar button uses, so both routes into this action share
+ * one confirm value, one request and one refresh. The count comes from the
+ * shared `csv-summary` fetch, resolved during the server render, so the copy
+ * names the real number at first paint rather than flickering into it.
  */
-const { data: summary } = await useFetch<{ total_rows: number }>(
-  () => `${config.public.apiBase}/csv/summary`,
-  { key: 'csv-summary', default: () => null },
-)
+const {
+  tableTotal,
+  clearing,
+  message: clearMessage,
+  error: clearError,
+  clearDatabase,
+  reset: resetClear,
+} = useClearDatabase()
 
-const tableTotal = ref<number | null>(summary.value?.total_rows ?? null)
-const clearing = ref(false)
 /** Second stage of the confirm. A destructive action should take two decisions. */
 const confirmingClear = ref(false)
-const clearMessage = ref('')
-const clearError = ref('')
 
-
-async function clearDatabase() {
-  clearing.value = true
-  clearError.value = ''
-  clearMessage.value = ''
-
-  try {
-    // DELETE with a JSON body, not a form post: that combination is not
-    // CORS-safelisted, so the browser preflights it and only this origin is
-    // allowed through. `confirm` is matched exactly server-side.
-    const data = await $fetch<{ message: string, table_total: number }>(
-      `${config.public.apiBase}/csv/rows`,
-      { method: 'DELETE', body: { confirm: 'CLEAR' } },
-    )
-    clearMessage.value = data.message
-    tableTotal.value = data.table_total
-    // The import result on screen now describes rows that no longer exist.
-    result.value = null
-  }
-  catch (e: unknown) {
-    const status = (e as { statusCode?: number })?.statusCode
-    clearError.value = status === 429
-      ? 'Too many attempts. Wait a minute and try again.'
-      : 'Could not clear the table. Is the API running?'
-  }
-  finally {
-    clearing.value = false
-    confirmingClear.value = false
-  }
+async function confirmClear() {
+  await clearDatabase()
+  confirmingClear.value = false
+  // Any import result on screen now describes rows that no longer exist.
+  if (!clearError.value) result.value = null
 }
 
 const canSubmit = computed(() => !!file.value && !uploading.value && !error.value)
@@ -137,8 +110,7 @@ function onDrop(e: DragEvent) {
 }
 
 function clear() {
-  clearMessage.value = ''
-  clearError.value = ''
+  resetClear()
   file.value = null
   error.value = ''
   progress.value = 0
@@ -172,8 +144,8 @@ function submit() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
         result.value = JSON.parse(xhr.responseText) as ImportResult
-        // Keep the clear-database panel honest about what it would remove.
-        tableTotal.value = result.value.table_total
+        // Keep the row count honest — the navbar button reads the same payload.
+        refreshNuxtData('csv-summary')
       } catch {
         error.value = 'Upload succeeded but the server sent a response we could not read.'
       }
@@ -401,7 +373,7 @@ function submit() {
               type="button"
               class="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-60"
               :disabled="clearing"
-              @click="clearDatabase"
+              @click="confirmClear"
             >
               {{ clearing ? 'Clearing…' : 'Yes, delete everything' }}
             </button>

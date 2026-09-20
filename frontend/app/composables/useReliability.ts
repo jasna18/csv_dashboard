@@ -149,5 +149,7 @@ export function useReliability() {
       .filter(Boolean).length,
   )
 
-  return { filters, data, pending, error, refresh, reset, activeCount }
+  // `query` is returned so the export button can request exactly the slice
+  // on screen rather than rebuilding the filter logic and drifting from it.
+  return { filters, query, data, pending, error, refresh, reset, activeCount }
 }
