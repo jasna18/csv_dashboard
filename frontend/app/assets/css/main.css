@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+/* Design tokens.
+   Kept as CSS variables so the UI and the charts draw from one palette —
+   ApexCharts is configured in JS and cannot see Tailwind classes, so the chart
+   side reads the same hexes from `app/composables/useChartTheme.ts`. Change a
+   colour in both places or not at all.
+
+   The blue and green below are chart-series slots first and brand colours
+   second, not the other way round: they were validated for colour-vision
+   separation, lightness band, chroma and contrast before being adopted (blue
+   vs green scores ΔE 23.1 under protanopia, well clear of the ≥8 gate). Do not
+   nudge them for taste without re-running that check. */
+@theme {
+  /* Brand blue — the sequential hue. --color-brand-500 is chart series slot 1. */
+  --color-brand-50: #eef5fd;
+  --color-brand-100: #cde2fb;
+  --color-brand-200: #9ec5f4;
+  --color-brand-300: #6da7ec;
+  --color-brand-400: #3987e5;
+  --color-brand-500: #2a78d6;
+  --color-brand-600: #256abf;
+  --color-brand-700: #1c5cab;
+  --color-brand-800: #184f95;
+  --color-brand-900: #0d366b;
+
+  /* Fleet green — the second accent. --color-fleet-500 is chart series slot 2. */
+  --color-fleet-50: #e7f7f1;
+  --color-fleet-100: #c3ecdd;
+  --color-fleet-200: #9ce0c6;
+  --color-fleet-300: #6fd0ac;
+  --color-fleet-400: #3cc091;
+  --color-fleet-500: #1baf7a;
+  --color-fleet-600: #199e70;
+  --color-fleet-700: #14805b;
+  --color-fleet-800: #106647;
+  --color-fleet-900: #0b4f38;
+
+  /* Status — reserved for good/warning/serious/critical, never for a series.
+     Always shipped with an icon or a label so meaning never rests on hue. */
+  --color-status-good: #0ca30c;
+  --color-status-warning: #fab219;
+  --color-status-serious: #ec835a;
+  --color-status-critical: #d03b3b;
+}
+
+/* Chart chrome. Outside @theme because these are read by the chart layer as raw
+   custom properties rather than used as Tailwind utility colours. */
+:root {
+  --chart-surface: #ffffff;
+  --chart-grid: #e8e8e3;
+  --chart-axis: #c3c2b7;
+  --chart-ink: #0b0b0b;
+  --chart-ink-muted: #6b6a66;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* ApexCharts renders its own DOM, so a handful of its defaults have to be
+   overridden here rather than through the options object. */
+.apexcharts-tooltip {
+  @apply !border-slate-200 !shadow-lg;
+}
+
+.apexcharts-tooltip-title {
+  @apply !bg-slate-50 !border-slate-200 !font-semibold;
+}
+
+/* The library ships a canvas-based menu we never expose; belt and braces in
+   case a future chart forgets to disable its toolbar. */
+.apexcharts-toolbar {
+  display: none !important;
+}

@@ -1,0 +1,24 @@
+# Nothing in this directory is meant to be fetched over HTTP.
+#
+# The project lives under XAMPP's DocumentRoot (C:/xampp/htdocs), so without
+# this file Apache happily serves the whole application tree: .env with the
+# APP_KEY and database credentials, storage/logs/laravel.log, every uploaded
+# spreadsheet under storage/app/private/datasets/ (with a directory index, so
+# they can be found without knowing the names), and the source itself.
+#
+# Only backend/public/ is a document root; it re-grants access in its own
+# .htaccess. The proper fix is to point a vhost at backend/public — or move the
+# project out of htdocs entirely — and serve the API through that. This file is
+# the guard for the current layout, and stays useful either way.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+
+# Never index a directory here, even if a future config re-grants access.
+Options -Indexes

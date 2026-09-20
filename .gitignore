@@ -1,0 +1,8 @@
+# OS and editor noise. Language-specific ignores live in backend/ and
+# frontend/ so they stay next to the tooling that produces them.
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
